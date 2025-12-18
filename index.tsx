@@ -1,4 +1,3 @@
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -91,16 +90,6 @@ function App() {
       inputRef.current?.focus();
   }, []);
 
-  // Fix for mobile: reset scroll when focusing an item
-  useEffect(() => {
-    if (focusedArtifactIndex !== null && window.innerWidth <= 1024) {
-        if (gridScrollRef.current) {
-            gridScrollRef.current.scrollTop = 0;
-        }
-        window.scrollTo(0, 0);
-    }
-  }, [focusedArtifactIndex]);
-
   // Cycle placeholders
   useEffect(() => {
       const interval = setInterval(() => {
@@ -114,14 +103,17 @@ function App() {
       const fetchDynamicPlaceholders = async () => {
           try {
               const apiKey = process.env.API_KEY;
-              if (!apiKey) return;
+              if (!apiKey) {
+                  console.warn("API_KEY environment variable is not set. AI features will not work.");
+                  return;
+              }
               const ai = new GoogleGenAI({ apiKey });
               const response = await ai.models.generateContent({
                   model: 'gemini-3-flash-preview',
                   contents: { 
                       role: 'user', 
                       parts: [{ 
-                          text: 'Generate 20 creative, short, diverse UI component prompts (e.g. "bioluminescent task list"). Return ONLY a raw JSON array of strings. IP SAFEGUARD: Avoid referencing specific famous artists, movies, or brands.' 
+                          text: 'Generate 12 creative and distinct UI component prompts. Return raw JSON array of strings.' 
                       }] 
                   }
               });
@@ -130,12 +122,11 @@ function App() {
               if (jsonMatch) {
                   const newPlaceholders = JSON.parse(jsonMatch[0]);
                   if (Array.isArray(newPlaceholders) && newPlaceholders.length > 0) {
-                      const shuffled = newPlaceholders.sort(() => 0.5 - Math.random()).slice(0, 10);
-                      setPlaceholders(prev => [...prev, ...shuffled]);
+                      setPlaceholders(prev => [...prev, ...newPlaceholders]);
                   }
               }
           } catch (e) {
-              console.warn("Silently failed to fetch dynamic placeholders", e);
+              console.warn("Failed to fetch dynamic placeholders", e);
           }
       };
       setTimeout(fetchDynamicPlaceholders, 1000);
@@ -188,26 +179,18 @@ function App() {
     setIsLoading(true);
     setComponentVariations([]);
     setActiveVariationIndex(0);
-    setDrawerState({ isOpen: true, mode: 'variations', title: 'Component Variations', data: currentArtifact.id });
+    setDrawerState({ isOpen: true, mode: 'variations', title: 'Visual Variations', data: currentArtifact.id });
 
     try {
         const apiKey = process.env.API_KEY;
-        if (!apiKey) throw new Error("API_KEY is not configured.");
+        if (!apiKey) throw new Error("API_KEY missing. Please configure your Vercel Environment Variables.");
         const ai = new GoogleGenAI({ apiKey });
 
         const prompt = `
-You are a master UI/UX designer. Generate 3 RADICAL CONCEPTUAL VARIATIONS of: "${currentSession.prompt}".
-
-**STRICT IP SAFEGUARD:**
-No names of artists. Instead, describe the *Physicality* and *Material Logic* of the UI.
-
-**CREATIVE GUIDANCE:**
-1. "Asymmetrical Primary Grid" (Heavy black strokes, rectilinear structure).
-2. "Suspended Kinetic Mobile" (Floating organic shapes, delicate connections).
-3. "Grainy Risograph Press" (Tactile grain, monochromatic ink depth).
-
-Required JSON Output Format (stream ONE object per line):
-\`{ "name": "Persona Name", "html": "..." }\`
+Generate 3 distinct visual variations for the component: "${currentSession.prompt}".
+Current context: ${currentArtifact.styleName}.
+Surprise me with radically different aesthetic directions.
+Return raw JSON object per line: { "name": "Name", "html": "..." }
         `.trim();
 
         const responseStream = await ai.models.generateContentStream({
@@ -222,7 +205,7 @@ Required JSON Output Format (stream ONE object per line):
             }
         }
     } catch (e: any) {
-        console.error("Error generating variations:", e);
+        console.error("Variation Error:", e);
     } finally {
         setIsLoading(false);
     }
@@ -258,7 +241,7 @@ Required JSON Output Format (stream ONE object per line):
         setCopyFeedback(true);
         setTimeout(() => setCopyFeedback(false), 2000);
       } catch (err) {
-        console.error('Failed to copy code:', err);
+        console.error('Copy failed:', err);
       }
     }
   };
@@ -268,11 +251,12 @@ Required JSON Output Format (stream ONE object per line):
       if (currentSession && focusedArtifactIndex !== null) {
           const artifact = currentSession.artifacts[focusedArtifactIndex];
           try {
+              // Copy HTML to clipboard and trigger notification
               await navigator.clipboard.writeText(artifact.html);
               setShareFeedback(true);
               setTimeout(() => setShareFeedback(false), 2000);
           } catch (err) {
-              console.error('Failed to share:', err);
+              console.error('Share failed:', err);
           }
       }
   };
@@ -287,7 +271,6 @@ Required JSON Output Format (stream ONE object per line):
 
       setIsLoading(true);
       
-      // Update status to streaming locally
       setSessions(prev => prev.map(sess => 
           sess.id === currentSession.id ? {
               ...sess,
@@ -303,9 +286,9 @@ Required JSON Output Format (stream ONE object per line):
           const ai = new GoogleGenAI({ apiKey });
 
           const prompt = `
-Regenerate a high-fidelity UI component for: "${promptToUse}" with the direction: "${styleInstruction}". 
-Avoid repeating the previous design. Surprise me with quality.
-Return ONLY RAW HTML. No markdown.
+Regenerate a high-fidelity HTML component for: "${promptToUse}" with a "${styleInstruction}" aesthetic. 
+The previous version was okay, but I want something more polished and unique.
+Return ONLY RAW HTML.
           `.trim();
           
           const responseStream = await ai.models.generateContentStream({
@@ -365,7 +348,7 @@ Return ONLY RAW HTML. No markdown.
         const url = URL.createObjectURL(content);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `flash_ui_${currentSession.id}.zip`;
+        link.download = `flash-ui-export-${Date.now()}.zip`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -374,7 +357,7 @@ Return ONLY RAW HTML. No markdown.
         setExportFeedback(true);
         setTimeout(() => setExportFeedback(false), 2000);
     } catch (err) {
-        console.error('Failed to generate ZIP:', err);
+        console.error('Export failed:', err);
     }
   };
 
@@ -404,7 +387,7 @@ Return ONLY RAW HTML. No markdown.
 
     const placeholderArtifacts: Artifact[] = Array(4).fill(null).map((_, i) => ({
         id: `${sessionId}_${i}`,
-        styleName: 'Designing...',
+        styleName: 'Thinking...',
         html: '',
         status: 'streaming',
     }));
@@ -422,12 +405,11 @@ Return ONLY RAW HTML. No markdown.
 
     try {
         const apiKey = process.env.API_KEY;
-        if (!apiKey) throw new Error("API_KEY is not configured.");
+        if (!apiKey) throw new Error("API_KEY missing.");
         const ai = new GoogleGenAI({ apiKey });
 
         const stylePrompt = `
-Generate 4 distinct design directions for: "${trimmedInput}". 
-Return ONLY a raw JSON array of 4 short names. No trademarks.
+Generate 4 distinct visual style names for a UI component: "${trimmedInput}". Return as a raw JSON array of strings.
         `.trim();
 
         const styleResponse = await ai.models.generateContent({
@@ -442,13 +424,11 @@ Return ONLY a raw JSON array of 4 short names. No trademarks.
         if (jsonMatch) {
             try {
                 generatedStyles = JSON.parse(jsonMatch[0]);
-            } catch (e) {
-                console.warn("Fallback to defaults");
-            }
+            } catch (e) {}
         }
 
         if (!generatedStyles || generatedStyles.length < 4) {
-            generatedStyles = ["Direction 1", "Direction 2", "Direction 3", "Direction 4"];
+            generatedStyles = ["Contemporary Minimal", "Glassmorphic Void", "Neo-Retro", "Tactile Clay"];
         }
         
         generatedStyles = generatedStyles.slice(0, 4);
@@ -467,8 +447,8 @@ Return ONLY a raw JSON array of 4 short names. No trademarks.
         const generateArtifact = async (artifact: Artifact, styleInstruction: string) => {
             try {
                 const prompt = `
-Create a high-fidelity UI component for: "${trimmedInput}" using the direction: "${styleInstruction}". 
-Return ONLY RAW HTML. No markdown.
+Create a stunning high-fidelity HTML component for: "${trimmedInput}" with a "${styleInstruction}" visual language. 
+Include CSS and subtle animations. Return ONLY RAW HTML.
           `.trim();
           
                 const responseStream = await ai.models.generateContentStream({
@@ -507,17 +487,16 @@ Return ONLY RAW HTML. No markdown.
                 ));
 
             } catch (e: any) {
-                console.error('Error:', e);
+                console.error('Artifact Generation Error:', e);
             }
         };
 
         await Promise.all(placeholderArtifacts.map((art, i) => generateArtifact(art, generatedStyles[i])));
 
     } catch (e) {
-        console.error("Fatal error", e);
+        console.error("Session Fatal Error", e);
     } finally {
         setIsLoading(false);
-        setTimeout(() => inputRef.current?.focus(), 100);
     }
   }, [inputValue, isLoading, sessions.length]);
 
@@ -647,18 +626,19 @@ Return ONLY RAW HTML. No markdown.
                             />
                         </div>
                         <div className="variation-controls">
-                            <button className="carousel-nav" onClick={() => cycleVariation(-1)}><ArrowLeftIcon /></button>
+                            <button className="carousel-nav tooltip-trigger" onClick={() => cycleVariation(-1)} data-tooltip="Previous"><ArrowLeftIcon /></button>
                             <div className="variation-info">
                                 <h3>{componentVariations[activeVariationIndex].name}</h3>
-                                <p>Variation {activeVariationIndex + 1} of {componentVariations.length}</p>
+                                <p>Direction {activeVariationIndex + 1} of {componentVariations.length}</p>
                             </div>
-                            <button className="carousel-nav" onClick={() => cycleVariation(1)}><ArrowRightIcon /></button>
+                            <button className="carousel-nav tooltip-trigger" onClick={() => cycleVariation(1)} data-tooltip="Next"><ArrowRightIcon /></button>
                         </div>
                         <button 
-                            className="apply-variation-btn" 
+                            className="apply-variation-btn tooltip-trigger" 
                             onClick={() => applyVariation(componentVariations[activeVariationIndex].html)}
+                            data-tooltip="Use this visual direction"
                         >
-                            <CheckIcon /> Use This Variation
+                            <CheckIcon /> Select Direction
                         </button>
                     </div>
                     <div className="variation-thumbnails">
@@ -692,7 +672,7 @@ Return ONLY RAW HTML. No markdown.
                      <div className="empty-content">
                          <h1>Flash UI</h1>
                          <p>Creative UI generation in a flash</p>
-                         <button className="surprise-button" onClick={handleSurpriseMe} disabled={isLoading}>
+                         <button className="surprise-button tooltip-trigger" onClick={handleSurpriseMe} disabled={isLoading} data-tooltip="Generate something random">
                              <SparklesIcon /> Surprise Me
                          </button>
                      </div>
@@ -747,25 +727,25 @@ Return ONLY RAW HTML. No markdown.
                     <button onClick={() => setFocusedArtifactIndex(null)} className="action-btn tooltip-trigger" data-tooltip="Back to Grid">
                         <GridIcon /> <span className="btn-text">Grid View</span>
                     </button>
-                    <button onClick={handleRegenerateArtifact} disabled={isLoading} className="action-btn tooltip-trigger" data-tooltip="Regenerate This Component">
+                    <button onClick={handleRegenerateArtifact} disabled={isLoading} className="action-btn tooltip-trigger" data-tooltip="Regenerate this specific component">
                         <RefreshIcon /> <span className="btn-text">Generate More</span>
                     </button>
-                    <button onClick={handleEditPrompt} className="action-btn tooltip-trigger" data-tooltip="Edit Your Prompt">
+                    <button onClick={handleEditPrompt} className="action-btn tooltip-trigger" data-tooltip="Modify current prompt">
                         <EditIcon /> <span className="btn-text">Edit Prompt</span>
                     </button>
-                    <button onClick={handleGenerateVariations} disabled={isLoading} className="action-btn tooltip-trigger" data-tooltip="Explore Visual Directions">
+                    <button onClick={handleGenerateVariations} disabled={isLoading} className="action-btn tooltip-trigger" data-tooltip="Explore other visual styles">
                         <SparklesIcon /> <span className="btn-text">Variations</span>
                     </button>
-                    <button onClick={handleCopyCode} className="action-btn tooltip-trigger" data-tooltip="Copy to Clipboard">
+                    <button onClick={handleCopyCode} className="action-btn tooltip-trigger" data-tooltip="Copy source code">
                         {copyFeedback ? <CheckIcon /> : <CopyIcon />} <span className="btn-text">{copyFeedback ? 'Copied' : 'Copy HTML'}</span>
                     </button>
-                    <button onClick={handleShare} className="action-btn tooltip-trigger" data-tooltip="Share Component Link">
+                    <button onClick={handleShare} className="action-btn tooltip-trigger" data-tooltip="Share this component">
                         {shareFeedback ? <CheckIcon /> : <ShareIcon />} <span className="btn-text">{shareFeedback ? 'Shared' : 'Share'}</span>
                     </button>
-                    <button onClick={handleShowCode} className="action-btn tooltip-trigger" data-tooltip="View Source Code">
+                    <button onClick={handleShowCode} className="action-btn tooltip-trigger" data-tooltip="View raw HTML/CSS">
                         <CodeIcon /> <span className="btn-text">Source</span>
                     </button>
-                    <button onClick={handleExportSession} className="action-btn tooltip-trigger" data-tooltip="Download All as ZIP">
+                    <button onClick={handleExportSession} className="action-btn tooltip-trigger" data-tooltip="Download as ZIP bundle">
                         {exportFeedback ? <CheckIcon /> : <DownloadIcon />} <span className="btn-text">{exportFeedback ? 'Exported' : 'Export Bundle'}</span>
                     </button>
                  </div>
@@ -795,7 +775,7 @@ Return ONLY RAW HTML. No markdown.
                             <ThinkingIcon />
                         </div>
                     )}
-                    <button className="send-button tooltip-trigger" onClick={() => handleSendMessage()} disabled={isLoading || !inputValue.trim()} data-tooltip="Generate UI">
+                    <button className="send-button tooltip-trigger" onClick={() => handleSendMessage()} disabled={isLoading || !inputValue.trim()} data-tooltip="Generate (Enter)">
                         <ArrowUpIcon />
                     </button>
                 </div>
