@@ -8,7 +8,6 @@
 import { GoogleGenAI } from '@google/genai';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
-import JSZip from 'jszip';
 
 import { Artifact, Session, ComponentVariation, LayoutOption } from './types';
 import { INITIAL_PLACEHOLDERS } from './constants';
@@ -27,10 +26,7 @@ import {
     GridIcon,
     CopyIcon,
     CheckIcon,
-    EditIcon,
-    DownloadIcon,
-    SunIcon,
-    MoonIcon
+    EditIcon
 } from './components/Icons';
 
 function App() {
@@ -43,13 +39,6 @@ function App() {
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
   const [placeholders, setPlaceholders] = useState<string[]>(INITIAL_PLACEHOLDERS);
   const [copyFeedback, setCopyFeedback] = useState(false);
-  const [exportFeedback, setExportFeedback] = useState(false);
-  
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    const saved = localStorage.getItem('app-theme');
-    if (saved) return saved as 'light' | 'dark';
-    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-  });
   
   const [drawerState, setDrawerState] = useState<{
       isOpen: boolean;
@@ -62,12 +51,6 @@ function App() {
 
   const inputRef = useRef<HTMLInputElement>(null);
   const gridScrollRef = useRef<HTMLDivElement>(null);
-
-  // Sync theme with DOM and localStorage
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('app-theme', theme);
-  }, [theme]);
 
   useEffect(() => {
       inputRef.current?.focus();
@@ -252,35 +235,6 @@ Required JSON Output Format (stream ONE object per line):
     }
   };
 
-  const handleExportSession = async () => {
-    const currentSession = sessions[currentSessionIndex];
-    if (!currentSession) return;
-    
-    try {
-        const zip = new JSZip();
-        currentSession.artifacts.forEach((art, i) => {
-            const sanitizedName = art.styleName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-            const filename = `${i + 1}_${sanitizedName}.html`;
-            zip.file(filename, art.html);
-        });
-
-        const content = await zip.generateAsync({ type: 'blob' });
-        const url = URL.createObjectURL(content);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `flash_ui_${currentSession.id}.zip`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-
-        setExportFeedback(true);
-        setTimeout(() => setExportFeedback(false), 2000);
-    } catch (err) {
-        console.error('Failed to generate ZIP:', err);
-    }
-  };
-
   const handleEditPrompt = () => {
     const currentSession = sessions[currentSessionIndex];
     if (currentSession) {
@@ -288,10 +242,6 @@ Required JSON Output Format (stream ONE object per line):
       setFocusedArtifactIndex(null);
       setTimeout(() => inputRef.current?.focus(), 100);
     }
-  };
-
-  const toggleTheme = () => {
-    setTheme(prev => (prev === 'light' ? 'dark' : 'light'));
   };
 
   const handleSendMessage = useCallback(async (manualPrompt?: string) => {
@@ -305,7 +255,7 @@ Required JSON Output Format (stream ONE object per line):
     const baseTime = Date.now();
     const sessionId = generateId();
 
-    const placeholderArtifacts: Artifact[] = Array(4).fill(null).map((_, i) => ({
+    const placeholderArtifacts: Artifact[] = Array(3).fill(null).map((_, i) => ({
         id: `${sessionId}_${i}`,
         styleName: 'Designing...',
         html: '',
@@ -329,7 +279,7 @@ Required JSON Output Format (stream ONE object per line):
         const ai = new GoogleGenAI({ apiKey });
 
         const stylePrompt = `
-Generate 4 distinct, highly evocative design directions for: "${trimmedInput}".
+Generate 3 distinct, highly evocative design directions for: "${trimmedInput}".
 
 **STRICT IP SAFEGUARD:**
 Never use artist or brand names. Use physical and material metaphors.
@@ -341,7 +291,7 @@ Never use artist or brand names. Use physical and material metaphors.
 - Example D: "Spectral Prismatic Diffusion" (Glassmorphism, caustic refraction, soft-focus morphing gradients).
 
 **GOAL:**
-Return ONLY a raw JSON array of 4 *NEW*, creative names for these directions (e.g. ["Tactile Risograph Press", "Kinetic Silhouette Balance", "Primary Pigment Gridwork", "Spectral Glass Caustics"]).
+Return ONLY a raw JSON array of 3 *NEW*, creative names for these directions (e.g. ["Tactile Risograph Press", "Kinetic Silhouette Balance", "Primary Pigment Gridwork"]).
         `.trim();
 
         const styleResponse = await ai.models.generateContent({
@@ -361,16 +311,15 @@ Return ONLY a raw JSON array of 4 *NEW*, creative names for these directions (e.
             }
         }
 
-        if (!generatedStyles || generatedStyles.length < 4) {
+        if (!generatedStyles || generatedStyles.length < 3) {
             generatedStyles = [
                 "Primary Pigment Gridwork",
                 "Tactile Risograph Layering",
-                "Kinetic Silhouette Balance",
-                "Spectral Glass Caustics"
+                "Kinetic Silhouette Balance"
             ];
         }
         
-        generatedStyles = generatedStyles.slice(0, 4);
+        generatedStyles = generatedStyles.slice(0, 3);
 
         setSessions(prev => prev.map(s => {
             if (s.id !== sessionId) return s;
@@ -476,7 +425,7 @@ Return ONLY RAW HTML. No markdown fences.
 
   const nextItem = useCallback(() => {
       if (focusedArtifactIndex !== null) {
-          if (focusedArtifactIndex < 3) setFocusedArtifactIndex(focusedArtifactIndex + 1);
+          if (focusedArtifactIndex < 2) setFocusedArtifactIndex(focusedArtifactIndex + 1);
       } else {
           if (currentSessionIndex < sessions.length - 1) setCurrentSessionIndex(currentSessionIndex + 1);
       }
@@ -510,16 +459,9 @@ Return ONLY RAW HTML. No markdown fences.
 
   return (
     <>
-        <div className="top-nav">
-          <div className="nav-controls">
-            <button className="theme-toggle" onClick={toggleTheme} aria-label="Toggle theme">
-              {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
-            </button>
-            <a href="https://x.com/ammaar" target="_blank" rel="noreferrer" className={`creator-credit ${hasStarted ? 'hide-on-mobile' : ''}`}>
-                created by @ammaar
-            </a>
-          </div>
-        </div>
+        <a href="https://x.com/ammaar" target="_blank" rel="noreferrer" className={`creator-credit ${hasStarted ? 'hide-on-mobile' : ''}`}>
+            created by @ammaar
+        </a>
 
         <SideDrawer 
             isOpen={drawerState.isOpen} 
@@ -555,8 +497,8 @@ Return ONLY RAW HTML. No markdown fences.
             <DottedGlowBackground 
                 gap={24} 
                 radius={1.5} 
-                color={theme === 'dark' ? "rgba(255, 255, 255, 0.02)" : "rgba(0, 0, 0, 0.05)"} 
-                glowColor={theme === 'dark' ? "rgba(255, 255, 255, 0.15)" : "rgba(0, 0, 0, 0.1)"} 
+                color="rgba(255, 255, 255, 0.02)" 
+                glowColor="rgba(255, 255, 255, 0.15)" 
                 speedScale={0.5} 
             />
 
@@ -614,23 +556,20 @@ Return ONLY RAW HTML. No markdown fences.
                     {currentSession?.prompt}
                  </div>
                  <div className="action-buttons">
-                    <button onClick={() => setFocusedArtifactIndex(null)} className="action-btn">
-                        <GridIcon /> <span className="btn-text">Grid View</span>
+                    <button onClick={() => setFocusedArtifactIndex(null)}>
+                        <GridIcon /> Grid View
                     </button>
-                    <button onClick={handleEditPrompt} className="action-btn">
-                        <EditIcon /> <span className="btn-text">Edit Prompt</span>
+                    <button onClick={handleEditPrompt}>
+                        <EditIcon /> Edit Prompt
                     </button>
-                    <button onClick={handleGenerateVariations} disabled={isLoading} className="action-btn">
-                        <SparklesIcon /> <span className="btn-text">Variations</span>
+                    <button onClick={handleGenerateVariations} disabled={isLoading}>
+                        <SparklesIcon /> Variations
                     </button>
-                    <button onClick={handleCopyCode} className="action-btn">
-                        {copyFeedback ? <CheckIcon /> : <CopyIcon />} <span className="btn-text">{copyFeedback ? 'Copied' : 'Copy HTML'}</span>
+                    <button onClick={handleCopyCode}>
+                        {copyFeedback ? <CheckIcon /> : <CopyIcon />} {copyFeedback ? 'Copied' : 'Copy HTML'}
                     </button>
-                    <button onClick={handleShowCode} className="action-btn">
-                        <CodeIcon /> <span className="btn-text">Source</span>
-                    </button>
-                    <button onClick={handleExportSession} className="action-btn">
-                        {exportFeedback ? <CheckIcon /> : <DownloadIcon />} <span className="btn-text">{exportFeedback ? 'Exported' : 'Export Bundle'}</span>
+                    <button onClick={handleShowCode}>
+                        <CodeIcon /> Source
                     </button>
                  </div>
             </div>
@@ -651,7 +590,6 @@ Return ONLY RAW HTML. No markdown fences.
                             onChange={handleInputChange} 
                             onKeyDown={handleKeyDown} 
                             disabled={isLoading} 
-                            placeholder="Describe your UI..."
                         />
                     ) : (
                         <div className="input-generating-label">
