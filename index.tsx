@@ -1,3 +1,4 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -10,7 +11,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
 import JSZip from 'jszip';
 
-import { Artifact, Session, ComponentVariation, LayoutOption } from './types';
+import { Artifact, Session, ComponentVariation, LayoutType } from './types';
 import { INITIAL_PLACEHOLDERS } from './constants';
 import { generateId } from './utils';
 
@@ -30,7 +31,12 @@ import {
     EditIcon,
     DownloadIcon,
     SunIcon,
-    MoonIcon
+    MoonIcon,
+    ShareIcon,
+    LayoutSingleIcon,
+    LayoutDoubleIcon,
+    LayoutMasonryIcon,
+    RefreshIcon
 } from './components/Icons';
 
 function App() {
@@ -44,11 +50,17 @@ function App() {
   const [placeholders, setPlaceholders] = useState<string[]>(INITIAL_PLACEHOLDERS);
   const [copyFeedback, setCopyFeedback] = useState(false);
   const [exportFeedback, setExportFeedback] = useState(false);
+  const [shareFeedback, setShareFeedback] = useState(false);
   
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('app-theme');
     if (saved) return saved as 'light' | 'dark';
     return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  });
+
+  const [layout, setLayout] = useState<LayoutType>(() => {
+    const saved = localStorage.getItem('app-layout');
+    return (saved as LayoutType) || 'grid';
   });
   
   const [drawerState, setDrawerState] = useState<{
@@ -59,6 +71,7 @@ function App() {
   }>({ isOpen: false, mode: null, title: '', data: null });
 
   const [componentVariations, setComponentVariations] = useState<ComponentVariation[]>([]);
+  const [activeVariationIndex, setActiveVariationIndex] = useState(0);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const gridScrollRef = useRef<HTMLDivElement>(null);
@@ -69,11 +82,16 @@ function App() {
     localStorage.setItem('app-theme', theme);
   }, [theme]);
 
+  // Sync layout with localStorage
+  useEffect(() => {
+    localStorage.setItem('app-layout', layout);
+  }, [layout]);
+
   useEffect(() => {
       inputRef.current?.focus();
   }, []);
 
-  // Fix for mobile: reset scroll when focusing an item to prevent "overscroll" state
+  // Fix for mobile: reset scroll when focusing an item
   useEffect(() => {
     if (focusedArtifactIndex !== null && window.innerWidth <= 1024) {
         if (gridScrollRef.current) {
@@ -169,7 +187,8 @@ function App() {
 
     setIsLoading(true);
     setComponentVariations([]);
-    setDrawerState({ isOpen: true, mode: 'variations', title: 'Variations', data: currentArtifact.id });
+    setActiveVariationIndex(0);
+    setDrawerState({ isOpen: true, mode: 'variations', title: 'Component Variations', data: currentArtifact.id });
 
     try {
         const apiKey = process.env.API_KEY;
@@ -180,20 +199,12 @@ function App() {
 You are a master UI/UX designer. Generate 3 RADICAL CONCEPTUAL VARIATIONS of: "${currentSession.prompt}".
 
 **STRICT IP SAFEGUARD:**
-No names of artists. 
-Instead, describe the *Physicality* and *Material Logic* of the UI.
+No names of artists. Instead, describe the *Physicality* and *Material Logic* of the UI.
 
-**CREATIVE GUIDANCE (Use these as EXAMPLES of how to describe style, but INVENT YOUR OWN):**
-1. Example: "Asymmetrical Primary Grid" (Heavy black strokes, rectilinear structure, flat primary pigments, high-contrast white space).
-2. Example: "Suspended Kinetic Mobile" (Delicate wire-thin connections, floating organic primary shapes, slow-motion balance, white-void background).
-3. Example: "Grainy Risograph Press" (Overprinted translucent inks, dithered grain textures, monochromatic color depth, raw paper substrate).
-4. Example: "Volumetric Spectral Fluid" (Generative morphing gradients, soft-focus diffusion, bioluminescent light sources, spectral chromatic aberration).
-
-**YOUR TASK:**
-For EACH variation:
-- Invent a unique design persona name based on a NEW physical metaphor.
-- Rewrite the prompt to fully adopt that metaphor's visual language.
-- Generate high-fidelity HTML/CSS.
+**CREATIVE GUIDANCE:**
+1. "Asymmetrical Primary Grid" (Heavy black strokes, rectilinear structure).
+2. "Suspended Kinetic Mobile" (Floating organic shapes, delicate connections).
+3. "Grainy Risograph Press" (Tactile grain, monochromatic ink depth).
 
 Required JSON Output Format (stream ONE object per line):
 \`{ "name": "Persona Name", "html": "..." }\`
@@ -251,6 +262,92 @@ Required JSON Output Format (stream ONE object per line):
       }
     }
   };
+
+  const handleShare = async () => {
+      const currentSession = sessions[currentSessionIndex];
+      if (currentSession && focusedArtifactIndex !== null) {
+          const artifact = currentSession.artifacts[focusedArtifactIndex];
+          try {
+              await navigator.clipboard.writeText(artifact.html);
+              setShareFeedback(true);
+              setTimeout(() => setShareFeedback(false), 2000);
+          } catch (err) {
+              console.error('Failed to share:', err);
+          }
+      }
+  };
+
+  const handleRegenerateArtifact = useCallback(async () => {
+      const currentSession = sessions[currentSessionIndex];
+      if (!currentSession || focusedArtifactIndex === null || isLoading) return;
+      
+      const artifact = currentSession.artifacts[focusedArtifactIndex];
+      const promptToUse = currentSession.prompt;
+      const styleInstruction = artifact.styleName;
+
+      setIsLoading(true);
+      
+      // Update status to streaming locally
+      setSessions(prev => prev.map(sess => 
+          sess.id === currentSession.id ? {
+              ...sess,
+              artifacts: sess.artifacts.map((art, idx) => 
+                  idx === focusedArtifactIndex ? { ...art, status: 'streaming', html: '' } : art
+              )
+          } : sess
+      ));
+
+      try {
+          const apiKey = process.env.API_KEY;
+          if (!apiKey) throw new Error("API_KEY missing.");
+          const ai = new GoogleGenAI({ apiKey });
+
+          const prompt = `
+Regenerate a high-fidelity UI component for: "${promptToUse}" with the direction: "${styleInstruction}". 
+Avoid repeating the previous design. Surprise me with quality.
+Return ONLY RAW HTML. No markdown.
+          `.trim();
+          
+          const responseStream = await ai.models.generateContentStream({
+              model: 'gemini-3-flash-preview',
+              contents: [{ parts: [{ text: prompt }], role: "user" }],
+          });
+
+          let accumulatedHtml = '';
+          for await (const chunk of responseStream) {
+              const text = chunk.text;
+              if (typeof text === 'string') {
+                  accumulatedHtml += text;
+                  setSessions(prev => prev.map(sess => 
+                      sess.id === currentSession.id ? {
+                          ...sess,
+                          artifacts: sess.artifacts.map((art, idx) => 
+                              idx === focusedArtifactIndex ? { ...art, html: accumulatedHtml } : art
+                          )
+                      } : sess
+                  ));
+              }
+          }
+          
+          let finalHtml = accumulatedHtml.trim();
+          if (finalHtml.startsWith('```html')) finalHtml = finalHtml.substring(7).trimStart();
+          if (finalHtml.startsWith('```')) finalHtml = finalHtml.substring(3).trimStart();
+          if (finalHtml.endsWith('```')) finalHtml = finalHtml.substring(0, finalHtml.length - 3).trimEnd();
+
+          setSessions(prev => prev.map(sess => 
+              sess.id === currentSession.id ? {
+                  ...sess,
+                  artifacts: sess.artifacts.map((art, idx) => 
+                      idx === focusedArtifactIndex ? { ...art, html: finalHtml, status: 'complete' } : art
+                  )
+              } : sess
+          ));
+      } catch (e) {
+          console.error('Regeneration error:', e);
+      } finally {
+          setIsLoading(false);
+      }
+  }, [sessions, currentSessionIndex, focusedArtifactIndex, isLoading]);
 
   const handleExportSession = async () => {
     const currentSession = sessions[currentSessionIndex];
@@ -329,19 +426,8 @@ Required JSON Output Format (stream ONE object per line):
         const ai = new GoogleGenAI({ apiKey });
 
         const stylePrompt = `
-Generate 4 distinct, highly evocative design directions for: "${trimmedInput}".
-
-**STRICT IP SAFEGUARD:**
-Never use artist or brand names. Use physical and material metaphors.
-
-**CREATIVE EXAMPLES (Do not simply copy these, use them as a guide for tone):**
-- Example A: "Asymmetrical Rectilinear Blockwork" (Grid-heavy, primary pigments, thick structural strokes, Bauhaus-functionalism vibe).
-- Example B: "Grainy Risograph Layering" (Tactile paper texture, overprinted translucent inks, dithered gradients).
-- Example C: "Kinetic Wireframe Suspension" (Floating silhouettes, thin balancing lines, organic primary shapes).
-- Example D: "Spectral Prismatic Diffusion" (Glassmorphism, caustic refraction, soft-focus morphing gradients).
-
-**GOAL:**
-Return ONLY a raw JSON array of 4 *NEW*, creative names for these directions (e.g. ["Tactile Risograph Press", "Kinetic Silhouette Balance", "Primary Pigment Gridwork", "Spectral Glass Caustics"]).
+Generate 4 distinct design directions for: "${trimmedInput}". 
+Return ONLY a raw JSON array of 4 short names. No trademarks.
         `.trim();
 
         const styleResponse = await ai.models.generateContent({
@@ -357,17 +443,12 @@ Return ONLY a raw JSON array of 4 *NEW*, creative names for these directions (e.
             try {
                 generatedStyles = JSON.parse(jsonMatch[0]);
             } catch (e) {
-                console.warn("Failed to parse styles, using fallbacks");
+                console.warn("Fallback to defaults");
             }
         }
 
         if (!generatedStyles || generatedStyles.length < 4) {
-            generatedStyles = [
-                "Primary Pigment Gridwork",
-                "Tactile Risograph Layering",
-                "Kinetic Silhouette Balance",
-                "Spectral Glass Caustics"
-            ];
+            generatedStyles = ["Direction 1", "Direction 2", "Direction 3", "Direction 4"];
         }
         
         generatedStyles = generatedStyles.slice(0, 4);
@@ -386,18 +467,8 @@ Return ONLY a raw JSON array of 4 *NEW*, creative names for these directions (e.
         const generateArtifact = async (artifact: Artifact, styleInstruction: string) => {
             try {
                 const prompt = `
-You are Flash UI. Create a stunning, high-fidelity UI component for: "${trimmedInput}".
-
-**CONCEPTUAL DIRECTION: ${styleInstruction}**
-
-**VISUAL EXECUTION RULES:**
-1. **Materiality**: Use the specified metaphor to drive every CSS choice. (e.g. if Risograph, use \`feTurbulence\` for grain and \`mix-blend-mode: multiply\` for ink layering).
-2. **Typography**: Use high-quality web fonts. Pair a bold sans-serif with a refined monospace for data.
-3. **Motion**: Include subtle, high-performance CSS/JS animations (hover transitions, entry reveals).
-4. **IP SAFEGUARD**: No artist names or trademarks. 
-5. **Layout**: Be bold with negative space and hierarchy. Avoid generic cards.
-
-Return ONLY RAW HTML. No markdown fences.
+Create a high-fidelity UI component for: "${trimmedInput}" using the direction: "${styleInstruction}". 
+Return ONLY RAW HTML. No markdown.
           `.trim();
           
                 const responseStream = await ai.models.generateContentStream({
@@ -436,22 +507,14 @@ Return ONLY RAW HTML. No markdown fences.
                 ));
 
             } catch (e: any) {
-                console.error('Error generating artifact:', e);
-                setSessions(prev => prev.map(sess => 
-                    sess.id === sessionId ? {
-                        ...sess,
-                        artifacts: sess.artifacts.map(art => 
-                            art.id === artifact.id ? { ...art, html: `<div style="color: #ff6b6b; padding: 20px;">Error: ${e.message}</div>`, status: 'error' } : art
-                        )
-                    } : sess
-                ));
+                console.error('Error:', e);
             }
         };
 
         await Promise.all(placeholderArtifacts.map((art, i) => generateArtifact(art, generatedStyles[i])));
 
     } catch (e) {
-        console.error("Fatal error in generation process", e);
+        console.error("Fatal error", e);
     } finally {
         setIsLoading(false);
         setTimeout(() => inputRef.current?.focus(), 100);
@@ -508,11 +571,45 @@ Return ONLY RAW HTML. No markdown fences.
       }
   }
 
+  const cycleVariation = (dir: number) => {
+      setActiveVariationIndex(prev => (prev + dir + componentVariations.length) % componentVariations.length);
+  };
+
   return (
     <>
         <div className="top-nav">
+          <div className="layout-picker">
+              <button 
+                className={`layout-btn tooltip-trigger ${layout === 'single' ? 'active' : ''}`} 
+                onClick={() => setLayout('single')} 
+                data-tooltip="Single Column"
+              >
+                  <LayoutSingleIcon />
+              </button>
+              <button 
+                className={`layout-btn tooltip-trigger ${layout === 'double' ? 'active' : ''}`} 
+                onClick={() => setLayout('double')} 
+                data-tooltip="Two Columns"
+              >
+                  <LayoutDoubleIcon />
+              </button>
+              <button 
+                className={`layout-btn tooltip-trigger ${layout === 'grid' ? 'active' : ''}`} 
+                onClick={() => setLayout('grid')} 
+                data-tooltip="Grid View"
+              >
+                  <GridIcon />
+              </button>
+              <button 
+                className={`layout-btn tooltip-trigger ${layout === 'masonry' ? 'active' : ''}`} 
+                onClick={() => setLayout('masonry')} 
+                data-tooltip="Masonry View"
+              >
+                  <LayoutMasonryIcon />
+              </button>
+          </div>
           <div className="nav-controls">
-            <button className="theme-toggle" onClick={toggleTheme} aria-label="Toggle theme">
+            <button className="theme-toggle tooltip-trigger" onClick={toggleTheme} data-tooltip="Toggle Theme">
               {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
             </button>
             <a href="https://x.com/ammaar" target="_blank" rel="noreferrer" className={`creator-credit ${hasStarted ? 'hide-on-mobile' : ''}`}>
@@ -529,24 +626,54 @@ Return ONLY RAW HTML. No markdown fences.
             {isLoadingDrawer && (
                  <div className="loading-state">
                      <ThinkingIcon /> 
-                     Designing variations...
+                     Thinking...
                  </div>
             )}
 
             {drawerState.mode === 'code' && (
-                <pre className="code-block"><code>{drawerState.data}</code></pre>
+                <div className="code-container">
+                    <pre className="code-block"><code>{drawerState.data}</code></pre>
+                </div>
             )}
             
-            {drawerState.mode === 'variations' && (
-                <div className="sexy-grid">
-                    {componentVariations.map((v, i) => (
-                         <div key={i} className="sexy-card" onClick={() => applyVariation(v.html)}>
-                             <div className="sexy-preview">
-                                 <iframe srcDoc={v.html} title={v.name} sandbox="allow-scripts allow-same-origin" />
-                             </div>
-                             <div className="sexy-label">{v.name}</div>
-                         </div>
-                    ))}
+            {drawerState.mode === 'variations' && componentVariations.length > 0 && (
+                <div className="variation-carousel">
+                    <div className="variation-display">
+                        <div className="variation-preview-large">
+                            <iframe 
+                                srcDoc={componentVariations[activeVariationIndex].html} 
+                                title={componentVariations[activeVariationIndex].name} 
+                                sandbox="allow-scripts allow-same-origin" 
+                            />
+                        </div>
+                        <div className="variation-controls">
+                            <button className="carousel-nav" onClick={() => cycleVariation(-1)}><ArrowLeftIcon /></button>
+                            <div className="variation-info">
+                                <h3>{componentVariations[activeVariationIndex].name}</h3>
+                                <p>Variation {activeVariationIndex + 1} of {componentVariations.length}</p>
+                            </div>
+                            <button className="carousel-nav" onClick={() => cycleVariation(1)}><ArrowRightIcon /></button>
+                        </div>
+                        <button 
+                            className="apply-variation-btn" 
+                            onClick={() => applyVariation(componentVariations[activeVariationIndex].html)}
+                        >
+                            <CheckIcon /> Use This Variation
+                        </button>
+                    </div>
+                    <div className="variation-thumbnails">
+                        {componentVariations.map((v, i) => (
+                            <div 
+                                key={i} 
+                                className={`variation-thumb ${activeVariationIndex === i ? 'active' : ''}`}
+                                onClick={() => setActiveVariationIndex(i)}
+                            >
+                                <div className="thumb-preview">
+                                     <iframe srcDoc={v.html} sandbox="allow-scripts allow-same-origin" />
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             )}
         </SideDrawer>
@@ -579,7 +706,10 @@ Return ONLY RAW HTML. No markdown fences.
                     
                     return (
                         <div key={session.id} className={`session-group ${positionClass}`}>
-                            <div className="artifact-grid" ref={sIndex === currentSessionIndex ? gridScrollRef : null}>
+                            <div 
+                                className={`artifact-grid layout-${layout}`} 
+                                ref={sIndex === currentSessionIndex ? gridScrollRef : null}
+                            >
                                 {session.artifacts.map((artifact, aIndex) => {
                                     const isFocused = focusedArtifactIndex === aIndex;
                                     
@@ -599,12 +729,12 @@ Return ONLY RAW HTML. No markdown fences.
             </div>
 
              {canGoBack && (
-                <button className="nav-handle left" onClick={prevItem} aria-label="Previous">
+                <button className="nav-handle left tooltip-trigger" onClick={prevItem} data-tooltip="Previous">
                     <ArrowLeftIcon />
                 </button>
              )}
              {canGoForward && (
-                <button className="nav-handle right" onClick={nextItem} aria-label="Next">
+                <button className="nav-handle right tooltip-trigger" onClick={nextItem} data-tooltip="Next">
                     <ArrowRightIcon />
                 </button>
              )}
@@ -614,22 +744,28 @@ Return ONLY RAW HTML. No markdown fences.
                     {currentSession?.prompt}
                  </div>
                  <div className="action-buttons">
-                    <button onClick={() => setFocusedArtifactIndex(null)} className="action-btn">
+                    <button onClick={() => setFocusedArtifactIndex(null)} className="action-btn tooltip-trigger" data-tooltip="Back to Grid">
                         <GridIcon /> <span className="btn-text">Grid View</span>
                     </button>
-                    <button onClick={handleEditPrompt} className="action-btn">
+                    <button onClick={handleRegenerateArtifact} disabled={isLoading} className="action-btn tooltip-trigger" data-tooltip="Regenerate This Component">
+                        <RefreshIcon /> <span className="btn-text">Generate More</span>
+                    </button>
+                    <button onClick={handleEditPrompt} className="action-btn tooltip-trigger" data-tooltip="Edit Your Prompt">
                         <EditIcon /> <span className="btn-text">Edit Prompt</span>
                     </button>
-                    <button onClick={handleGenerateVariations} disabled={isLoading} className="action-btn">
+                    <button onClick={handleGenerateVariations} disabled={isLoading} className="action-btn tooltip-trigger" data-tooltip="Explore Visual Directions">
                         <SparklesIcon /> <span className="btn-text">Variations</span>
                     </button>
-                    <button onClick={handleCopyCode} className="action-btn">
+                    <button onClick={handleCopyCode} className="action-btn tooltip-trigger" data-tooltip="Copy to Clipboard">
                         {copyFeedback ? <CheckIcon /> : <CopyIcon />} <span className="btn-text">{copyFeedback ? 'Copied' : 'Copy HTML'}</span>
                     </button>
-                    <button onClick={handleShowCode} className="action-btn">
+                    <button onClick={handleShare} className="action-btn tooltip-trigger" data-tooltip="Share Component Link">
+                        {shareFeedback ? <CheckIcon /> : <ShareIcon />} <span className="btn-text">{shareFeedback ? 'Shared' : 'Share'}</span>
+                    </button>
+                    <button onClick={handleShowCode} className="action-btn tooltip-trigger" data-tooltip="View Source Code">
                         <CodeIcon /> <span className="btn-text">Source</span>
                     </button>
-                    <button onClick={handleExportSession} className="action-btn">
+                    <button onClick={handleExportSession} className="action-btn tooltip-trigger" data-tooltip="Download All as ZIP">
                         {exportFeedback ? <CheckIcon /> : <DownloadIcon />} <span className="btn-text">{exportFeedback ? 'Exported' : 'Export Bundle'}</span>
                     </button>
                  </div>
@@ -659,7 +795,7 @@ Return ONLY RAW HTML. No markdown fences.
                             <ThinkingIcon />
                         </div>
                     )}
-                    <button className="send-button" onClick={() => handleSendMessage()} disabled={isLoading || !inputValue.trim()}>
+                    <button className="send-button tooltip-trigger" onClick={() => handleSendMessage()} disabled={isLoading || !inputValue.trim()} data-tooltip="Generate UI">
                         <ArrowUpIcon />
                     </button>
                 </div>
