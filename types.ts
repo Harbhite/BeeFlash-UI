@@ -1,10 +1,7 @@
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
-
-export type LayoutType = 'single' | 'double' | 'grid' | 'masonry';
 
 export interface Artifact {
   id: string;
